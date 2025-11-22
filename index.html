@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<title>Kira Jump – Ultimate Edition</title>
+
+<style>
+  body {
+    margin: 0;
+    overflow: hidden;
+    background: #222;
+    font-family: Arial;
+    user-select: none;
+  }
+
+  /* Canvas centré */
+  #gameCanvas {
+    display: block;
+    margin: 20px auto 0 auto;
+    background: linear-gradient(#87CEFA, #ffffff);
+    border: 3px solid #000;
+    border-radius: 10px;
+  }
+
+  /* Menu Start */
+  #startMenu, #gameOverMenu {
+    position: fixed;
+    top: 0; left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0,0,0,0.85);
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    color: white;
+    font-size: 32px;
+    z-index: 10;
+  }
+
+  #startMenu button, #gameOverMenu button {
+    font-size: 30px;
+    padding: 18px 50px;
+    background: orange;
+    color: #fff;
+    border: none;
+    border-radius: 12px;
+    margin-top: 20px;
+    font-weight: bold;
+    box-shadow: 0 5px 15px rgba(0,0,0,0.4);
+  }
+
+  #mobileControls {
+    width: 100%;
+    display: flex;
+    justify-content: center;
+    gap: 40px;
+    margin-top: 10px;
+  }
+
+  #mobileControls button {
+    font-size: 28px;
+    padding: 20px 40px;
+    border-radius: 14px;
+    border: none;
+    background: orange;
+    color: white;
+    font-weight: bold;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+  }
+
+  #mobileControls button:active {
+    transform: scale(0.9);
+  }
+</style>
+</head>
+
+<body>
+
+<!-- Menu Start -->
+<div id="startMenu">
+  <div style="font-size:50px;font-weight:bold;">KIRA JUMP</div>
+  <div style="font-size:22px;margin-top:10px;">Cartoon Runner Edition</div>
+  <button id="btnStart">PLAY</button>
+</div>
+
+<!-- Canvas -->
+<canvas id="gameCanvas" width="900" height="400"></canvas>
+
+<!-- Mobile buttons -->
+<div id="mobileControls">
+  <button id="btnJump">Jump</button>
+  <button id="btnSlide">Slide</button>
+</div>
+
+<!-- GAME OVER -->
+<div id="gameOverMenu" style="display:none;">
+  <div id="gameOverText" style="font-size:45px;margin-bottom:20px;">GAME OVER</div>
+  <button id="btnRestart">RESTART</button>
+</div>
+
+<script>
+// ======================================
+//             BASIC SETUP
+// ======================================
+const canvas = document.getElementById("gameCanvas");
+const ctx = canvas.getContext("2d");
+
+let gameRunning = false;
+
+// Fake assets (remplacés par ton pack HD plus tard)
+const fakeSound = { play(){} };
+const fakeImg = new Image();
+
+const assets = {
+  sprite: fakeImg,
+  bg: fakeImg,
+  obstacle: fakeImg,
+  coin: fakeImg,
+  sfxJump: fakeSound,
+  sfxHit: fakeSound
+};
+
+// ======================================
+//             PLAYER
+// ======================================
+let player = {
+  x: 80,
+  y: 300,
+  width: 80,
+  height: 80,
+  vy: 0,
+  jumping: false,
+  frame: 0
+};
+
+let gravity = 1.2;
+
+// ======================================
+//             GAME OBJECTS
+// ======================================
+let obstacle = { x: 900, y: 320, width: 60, height: 60 };
+let coin = { x: 1300, y: 250, width: 40, height: 40 };
+
+let score = 0;
+let lives = 3;
+
+let particles = [];
+
+// ======================================
+//             PARTICLES EFFECT
+// ======================================
+function spawnParticle(x, y) {
+  particles.push({
+    x, y,
+    vx: (Math.random()*4)-2,
+    vy: -Math.random()*2,
+    size: 6 + Math.random()*4,
+    alpha: 1
+  });
+}
+
+function drawParticles() {
+  particles.forEach(p => {
+    ctx.fillStyle = `rgba(200,200,200,${p.alpha})`;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.size, 0, Math.PI*2);
+    ctx.fill();
+
+    p.x += p.vx;
+    p.y += p.vy;
+    p.alpha -= 0.02;
+  });
+
+  particles = particles.filter(p => p.alpha > 0);
+}
+
+// ======================================
+//             GAME LOOP
+// ======================================
+function loop() {
+  if (!gameRunning) return;
+
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  // Background color
+  ctx.fillStyle = "#87CEFA";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  // Jump physics
+  if (player.jumping) {
+    player.vy += gravity;
+    player.y += player.vy;
+
+    if (player.y >= 300) {
+      player.y = 300;
+      player.jumping = false;
+      spawnParticle(player.x+40, player.y+80);
+    }
+  }
+
+  // Player
+  ctx.fillStyle = "red";
+  ctx.fillRect(player.x, player.y, player.width, player.height);
+
+  // Obstacle
+  obstacle.x -= 7;
+  if (obstacle.x < -60) obstacle.x = 900 + Math.random() * 400;
+  ctx.fillStyle = "brown";
+  ctx.fillRect(obstacle.x, obstacle.y, obstacle.width, obstacle.height);
+
+  // Coin
+  coin.x -= 7;
+  if (coin.x < -40) coin.x = 900 + Math.random() * 700;
+  ctx.fillStyle = "gold";
+  ctx.beginPath();
+  ctx.arc(coin.x, coin.y, 20, 0, Math.PI*2);
+  ctx.fill();
+
+  // Particles
+  drawParticles();
+
+  // COLLISIONS
+  if (
+    player.x < obstacle.x + obstacle.width &&
+    player.x + player.width > obstacle.x &&
+    player.y + player.height > obstacle.y
+  ) {
+    navigator.vibrate?.(120);
+    lives--;
+    obstacle.x = 900;
+
+    if (lives <= 0) return showGameOver();
+  }
+
+  if (
+    player.x < coin.x + 40 &&
+    player.x + player.width > coin.x &&
+    player.y < coin.y + 40 &&
+    player.y + player.height > coin.y
+  ) {
+    score++;
+    coin.x = 900 + Math.random() * 500;
+  }
+
+  // HUD
+  ctx.fillStyle = "black";
+  ctx.font = "26px Arial";
+  ctx.fillText("Score: " + score, 20, 30);
+  ctx.fillText("Lives: " + lives, 20, 60);
+
+  requestAnimationFrame(loop);
+}
+
+// ======================================
+//         GAME OVER SCREEN
+// ======================================
+function showGameOver() {
+  gameRunning = false;
+  document.getElementById("gameOverMenu").style.display = "flex";
+}
+
+// ======================================
+//         START + RESTART
+// ======================================
+document.getElementById("btnStart").onclick = () => {
+  document.getElementById("startMenu").style.display = "none";
+  gameRunning = true;
+  loop();
+};
+
+document.getElementById("btnRestart").onclick = () => {
+  location.reload();
+};
+
+// ======================================
+//         CONTROLS (PC + MOBILE)
+// ======================================
+document.addEventListener("keydown", (e) => {
+  if (e.code === "Space" && !player.jumping) {
+    player.jumping = true;
+    player.vy = -18;
+  }
+  if (e.code === "ArrowDown") {
+    player.height = 40;
+    setTimeout(() => player.height = 80, 350);
+  }
+});
+
+document.getElementById("btnJump").ontouchstart = () => {
+  if (!player.jumping) {
+    player.jumping = true;
+    player.vy = -18;
+    navigator.vibrate?.(40);
+  }
+};
+
+document.getElementById("btnSlide").ontouchstart = () => {
+  player.height = 40;
+  navigator.vibrate?.(40);
+  setTimeout(() => player.height = 80, 350);
+};
+</script>
+
+</body>
+</html>
