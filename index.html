@@ -1,0 +1,286 @@
+<!-- index.html - Cartoon Runner (single-file) - drop in GitHub repo and publish with Pages -->
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8" />
+<title>Cartoon Runner - Kira</title>
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<style>
+  html,body{height:100%;margin:0;background:#87CEFA;font-family:Arial,Helvetica,sans-serif}
+  #game-container{width:100%;height:100vh;display:flex;align-items:center;justify-content:center;position:relative}
+  canvas{image-rendering:optimizeQuality}
+  .ui{position:absolute;left:12px;top:12px;color:#111;z-index:20}
+  .hint{position:absolute;right:12px;top:12px;color:#111;z-index:20}
+</style>
+</head>
+<body>
+<div id="game-container"></div>
+<div class="ui">Espace: sauter • Score & Lives en haut</div>
+<div class="hint">Remplace les images dans /assets/sprites/ puis rafraîchis</div>
+
+<!-- Phaser CDN -->
+<script src="https://cdn.jsdelivr.net/npm/phaser@3.60.0/dist/phaser.min.js"></script>
+
+<script>
+// ---------------- CONFIG ----------------
+const WIDTH = 900, HEIGHT = 500;
+const ASSET_BASE = 'assets/';
+const SPRITE_FRAME = 512; // taille recommandée par frame (512x512)
+const RUN_FRAMES = 8, JUMP_FRAMES = 4, IDLE_FRAMES = 4, SLIDE_FRAMES = 4;
+
+// expected asset filenames (place in assets/sprites/ and assets/bg/)
+const ASSETS = {
+  player_run: ASSET_BASE + 'sprites/player_run.png',   // 4096x512 (8x512)
+  player_jump: ASSET_BASE + 'sprites/player_jump.png', // 2048x512 (4x512)
+  player_idle: ASSET_BASE + 'sprites/player_idle.png', // 2048x512
+  player_slide: ASSET_BASE + 'sprites/player_slide.png',// 2048x512
+  coin: ASSET_BASE + 'sprites/coin.png',
+  obstacle: ASSET_BASE + 'sprites/obstacle.png',
+  bg1: ASSET_BASE + 'bg/bg_layer1.png',
+  bg2: ASSET_BASE + 'bg/bg_layer2.png',
+  bg3: ASSET_BASE + 'bg/bg_layer3.png'
+};
+
+// ---------------- PHASER GAME ----------------
+const config = {
+  type: Phaser.AUTO,
+  parent: 'game-container',
+  width: WIDTH,
+  height: HEIGHT,
+  backgroundColor: 0x87cefa,
+  physics: { default: 'arcade', arcade: { gravity: { y: 1200 }, debug: false } },
+  scene: { preload, create, update }
+};
+const game = new Phaser.Game(config);
+
+// ---------------- PRELOAD ----------------
+function preload() {
+  // try load sprite-sheets; if missing we'll create placeholders in create()
+  this.load.spritesheet('player_run', ASSETS.player_run, { frameWidth: SPRITE_FRAME, frameHeight: SPRITE_FRAME });
+  this.load.spritesheet('player_jump', ASSETS.player_jump, { frameWidth: SPRITE_FRAME, frameHeight: SPRITE_FRAME });
+  this.load.spritesheet('player_idle', ASSETS.player_idle, { frameWidth: SPRITE_FRAME, frameHeight: SPRITE_FRAME });
+  this.load.spritesheet('player_slide', ASSETS.player_slide, { frameWidth: SPRITE_FRAME, frameHeight: SPRITE_FRAME });
+
+  // others
+  this.load.image('coin', ASSETS.coin);
+  this.load.image('obst', ASSETS.obstacle);
+  this.load.image('bg1', ASSETS.bg1);
+  this.load.image('bg2', ASSETS.bg2);
+  this.load.image('bg3', ASSETS.bg3);
+
+  // Listen for errors (missing files)
+  this.load.on('loaderror', (file) => {
+    console.warn('loaderror', file && file.key, file && file.src);
+    // we will generate dynamic placeholders later in create()
+  });
+}
+
+// ---------------- CREATE ----------------
+function create() {
+  const scene = this;
+
+  // --- backgrounds (parallax) ---
+  if (this.textures.exists('bg1')) {
+    this.bg1 = this.add.tileSprite(0,0,WIDTH,HEIGHT,'bg1').setOrigin(0).setScrollFactor(0);
+  } else {
+    // simple sky color fallback already set by backgroundColor
+  }
+  if (this.textures.exists('bg2')) {
+    this.bg2 = this.add.tileSprite(0,40,WIDTH,200,'bg2').setOrigin(0).setScrollFactor(0);
+  }
+  if (this.textures.exists('bg3')) {
+    this.bg3 = this.add.tileSprite(0,200,WIDTH,300,'bg3').setOrigin(0).setScrollFactor(0);
+  }
+
+  // ground
+  const GROUND_Y = 400;
+  this.add.rectangle(0, GROUND_Y, WIDTH, HEIGHT-GROUND_Y, 0x3c3c3c).setOrigin(0);
+
+  // create placeholder textures for missing assets (512x512 frames)
+  ensurePlaceholder(this, 'player_run', SPRITE_FRAME, SPRITE_FRAME, RUN_FRAMES);
+  ensurePlaceholder(this, 'player_jump', SPRITE_FRAME, SPRITE_FRAME, JUMP_FRAMES);
+  ensurePlaceholder(this, 'player_idle', SPRITE_FRAME, SPRITE_FRAME, IDLE_FRAMES);
+  ensurePlaceholder(this, 'player_slide', SPRITE_FRAME, SPRITE_FRAME, SLIDE_FRAMES);
+  if (!this.textures.exists('coin')) createSimpleCoin(this);
+  if (!this.textures.exists('obst')) createSimpleObstacle(this);
+
+  // Player sprite
+  this.player = this.physics.add.sprite(150, 360, 'player_run');
+  this.player.setCollideWorldBounds(true);
+  this.player.setOrigin(0.5,1);
+  // scale so 512px fits nicely
+  const displayScale = 0.22;
+  this.player.setScale(displayScale);
+  this.player.body.setSize(200, 340); // hitbox
+
+  // create animations from spritesheets
+  createAnimIfExists(this, 'run', 'player_run', RUN_FRAMES, 14, -1);
+  createAnimIfExists(this, 'jump', 'player_jump', JUMP_FRAMES, 12, 0);
+  createAnimIfExists(this, 'idle', 'player_idle', IDLE_FRAMES, 6, -1);
+  createAnimIfExists(this, 'slide', 'player_slide', SLIDE_FRAMES, 12, 0);
+
+  this.player.state = 'run';
+  playAnim(this, 'run');
+
+  // groups
+  this.obstacles = this.physics.add.group();
+  this.coins = this.physics.add.group();
+
+  // spawn loop
+  this.time.addEvent({ delay: 1400, callback: spawnWave, callbackScope: this, loop: true });
+
+  // collisions
+  this.physics.add.collider(this.player, this.obstacles, onHit, null, this);
+  this.physics.add.overlap(this.player, this.coins, onCoin, null, this);
+
+  // controls
+  this.input.keyboard.on('keydown-SPACE', () => {
+    if (this.player.body.onFloor()) {
+      this.player.setVelocityY(-540);
+      playAnim(this, 'jump');
+    }
+  });
+
+  // ui + state
+  this.score = 0;
+  this.lives = 3;
+  this.scoreText = this.add.text(12,12,'Score: 0   Lives: 3', { font: '20px Arial', color: '#111' }).setDepth(10);
+}
+
+// ---------------- UPDATE ----------------
+function update(time, delta) {
+  const speed = 6;
+  const dt = delta/1000;
+  // parallax
+  if (this.bg1) this.bg1.tilePositionX += speed*0.3;
+  if (this.bg2) this.bg2.tilePositionX += speed*0.6;
+  if (this.bg3) this.bg3.tilePositionX += speed*1.0;
+
+  // move obstacles/coins left
+  Phaser.Actions.IncX(this.obstacles.getChildren(), -Math.round(speed));
+  Phaser.Actions.IncX(this.coins.getChildren(), -Math.round(speed));
+  // cleanup
+  this.obstacles.getChildren().forEach(o => { if (o.x + o.width < 0) o.destroy(); });
+  this.coins.getChildren().forEach(c => { if (c.x + c.width < 0) c.destroy(); });
+
+  // animations: auto-set run when on floor and not jumping
+  if (this.player.body.onFloor()) {
+    if (this.player.state !== 'run') { this.player.state = 'run'; playAnim(this, 'run'); }
+  } else {
+    if (this.player.state !== 'jump') { this.player.state = 'jump'; playAnim(this, 'jump'); }
+  }
+}
+
+// ---------------- SPAWN / COLLISIONS ----------------
+function spawnWave() {
+  const scene = this;
+  const x = WIDTH + 80;
+  // obstacle
+  let obst;
+  if (scene.textures.exists('obst')) {
+    obst = scene.physics.add.image(x, 400, 'obst').setOrigin(0,1);
+    obst.setScale(0.6);
+  } else {
+    // dynamic rectangle fallback
+    obst = scene.physics.add.image(x, 400, null).setOrigin(0,1);
+    createRectTexture(scene, 'obst', 80, 100, 0x5c5c5c);
+    obst.setTexture('obst');
+  }
+  obst.body.setImmovable(true); obst.body.allowGravity = false;
+  scene.obstacles.add(obst);
+
+  // coins
+  for (let i=0;i<3;i++){
+    let cx = x + 120 + i*40; let cy = 300 - i*10;
+    let coin;
+    if (scene.textures.exists('coin')) {
+      coin = scene.physics.add.image(cx, cy, 'coin').setScale(0.5);
+    } else {
+      createCircleTexture(scene, 'coin', 28, 0xf2d12b);
+      coin = scene.physics.add.image(cx, cy, 'coin').setScale(0.6);
+    }
+    coin.body.allowGravity = false;
+    scene.coins.add(coin);
+  }
+}
+
+function onHit(player, obst) {
+  obst.destroy();
+  this.lives -= 1;
+  this.scoreText.setText(`Score: ${this.score}   Lives: ${this.lives}`);
+  if (this.lives <= 0) {
+    this.add.text(WIDTH/2-220, HEIGHT/2, 'GAME OVER - Refresh to restart', { font: '28px Arial', color: '#ff0000' });
+    // stop spawns
+    // NOTE: in this single-file setup, we keep it simple: reload to restart
+  }
+}
+function onCoin(player, coin) {
+  coin.destroy();
+  this.score += 10;
+  this.scoreText.setText(`Score: ${this.score}   Lives: ${this.lives}`);
+}
+
+// ---------------- HELPERS / PLACEHOLDERS ----------------
+function ensurePlaceholder(scene, key, fw, fh, frames) {
+  if (scene.textures.exists(key)) return;
+  // create a single texture that contains frames horizontally (frames * fw, fh)
+  const W = fw*frames, H = fh;
+  const g = scene.make.graphics({ x:0,y:0, add:false });
+  // background gradient-like
+  for (let i=0;i<frames;i++){
+    const x = i*fw;
+    const hue = Math.floor(200 - i*(120/frames));
+    g.fillStyle(Phaser.Display.Color.GetColor(hue, 180, 220), 1);
+    g.fillRoundedRect(x+8, 8, fw-16, fh-16, 24);
+    // draw a simple cartoon character silhouette per frame
+    g.fillStyle(0x222222, 1);
+    g.fillCircle(x+fw*0.5, fh*0.45, fw*0.16); // head
+    g.fillRect(x+fw*0.5 - fw*0.08, fh*0.55, fw*0.16, fw*0.32); // body
+    // mouth / eyes as small accents
+    g.fillStyle(0xffffff,1); g.fillCircle(x+fw*0.47, fh*0.44, fw*0.03); g.fillCircle(x+fw*0.53, fh*0.44, fw*0.03);
+  }
+  g.generateTexture(key, W, H);
+  g.destroy();
+}
+
+function createAnimIfExists(scene, animKey, texKey, frames, rate, repeat) {
+  // only create if texture exists
+  if (!scene.textures.exists(texKey)) return;
+  // if texture width is frames*frame, Phaser already loaded as spritesheet in preload;
+  // create animation
+  scene.anims.create({ key: animKey, frames: scene.anims.generateFrameNumbers(texKey, { start: 0, end: frames-1 }), frameRate: rate, repeat: repeat });
+}
+
+function playAnim(scene, key) {
+  if (!scene.anims.exists(key)) return;
+  scene.player.anims.play(key, true);
+}
+
+function createSimpleCoin(scene) {
+  if (scene.textures.exists('coin')) return;
+  createCircleTexture(scene, 'coin', 64, 0xf2d12b);
+}
+function createSimpleObstacle(scene) {
+  if (scene.textures.exists('obst')) return;
+  createRectTexture(scene, 'obst', 140, 120, 0x5c5c5c);
+}
+
+function createRectTexture(scene, key, w, h, color) {
+  if (scene.textures.exists(key)) return;
+  const g = scene.make.graphics({ add:false });
+  g.fillStyle(color,1); g.fillRoundedRect(0,0,w,h,8);
+  g.lineStyle(6,0xffffff,0.08); g.strokeRoundedRect(0,0,w,h,8);
+  g.generateTexture(key, w, h);
+  g.destroy();
+}
+function createCircleTexture(scene, key, d, color) {
+  if (scene.textures.exists(key)) return;
+  const g = scene.make.graphics({ add:false });
+  g.fillStyle(color,1); g.fillCircle(d/2,d/2,d/2);
+  g.lineStyle(4,0xffffff,0.15); g.strokeCircle(d/2,d/2,d/2 - 2);
+  g.generateTexture(key, d, d);
+  g.destroy();
+}
+</script>
+</body>
+</html>
